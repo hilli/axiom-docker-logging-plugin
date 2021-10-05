@@ -1,5 +1,5 @@
 # Plugin parameters
-PLUGIN_NAME=logzio/logzio-logging-plugin
+PLUGIN_NAME=axiomhq/axiom-logging-plugin
 PLUGIN_TAG=1.0.1
 
 all: clean docker rootfs create
@@ -9,7 +9,7 @@ clean:
 	rm -rf ./plugin
 
 docker:
-	@echo "### docker build: rootfs image with logzio-logging-plugin"
+	@echo "### docker build: rootfs image with axiom-logging-plugin"
 	docker build -t ${PLUGIN_NAME}:rootfs .
 
 rootfs:

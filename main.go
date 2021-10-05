@@ -24,7 +24,7 @@ import (
 	"github.com/docker/go-plugins-helpers/sdk"
 )
 
-const socketName = "/run/docker/plugins/logzio.sock"
+const socketName = "/run/docker/plugins/axiom.sock"
 
 var logLevels = map[string]logrus.Level{
 	"debug": logrus.DebugLevel,
