@@ -1,8 +1,10 @@
 # Plugin parameters
-PLUGIN_NAME=axiomhq/axiom-logging-plugin
-PLUGIN_TAG=1.0.1
+PLUGIN_NAME=axiom/docker-logging-plugin
+PLUGIN_TAG=0.0.1
+DOCKER_BUILDER=axiom-docker-builder
 
 all: clean docker rootfs create
+arm64: clean docker_arm64 rootfs create
 
 clean:
 	@echo "### rm ./plugin"
@@ -10,7 +12,15 @@ clean:
 
 docker:
 	@echo "### docker build: rootfs image with axiom-logging-plugin"
-	docker build -t ${PLUGIN_NAME}:rootfs .
+	docker buildx create --name ${DOCKER_BUILDER} --use || true
+	docker buildx --builder ${DOCKER_BUILDER} build --platform linux/amd64 \
+	--tag ${PLUGIN_NAME}:rootfs --load .
+
+docker_arm64:
+	@echo "### docker build: rootfs image with axiom-logging-plugin"
+	docker buildx create --name ${DOCKER_BUILDER} --use || true
+	docker buildx --builder ${DOCKER_BUILDER} build --platform linux/arm64 \
+	--tag ${PLUGIN_NAME}:rootfs --load .
 
 rootfs:
 	@echo "### create rootfs directory in ./plugin/rootfs"
