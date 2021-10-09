@@ -1,6 +1,6 @@
 FROM --platform=$BUILDPLATFORM golang:1.17.1 as builder
 ARG TARGETARCH
-ENV GO111MODULE=on GOOS=$TARGETOS GOARCH=$TARGETARCH
+ENV GO111MODULE=on GOARCH=$TARGETARCH
 
 WORKDIR /go/src/github.com/axiomhq/axiom-logging-plugin/
 
