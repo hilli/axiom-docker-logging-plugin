@@ -19,12 +19,13 @@ import (
 	"encoding/json"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/axiomhq/axiom-go/axiom"
 	"github.com/docker/docker/api/types/plugins/logdriver"
 	"github.com/docker/docker/daemon/logger"
 	"github.com/docker/docker/daemon/logger/jsonfilelog"
 	"github.com/docker/docker/daemon/logger/loggerutils"
-	"github.com/logzio/logzio-go"
 	"github.com/fatih/structs"
+	"github.com/logzio/logzio-go"
 	"github.com/pkg/errors"
 	"github.com/tonistiigi/fifo"
 
@@ -33,21 +34,16 @@ import (
 
 const (
 	//log-opt
-	logzioFormat    = "logzio-format"
-	logzioTag       = "logzio-tag"
-	logzioToken     = "logzio-token"
-	logzioType      = "logzio-type"
-	logzioURL       = "logzio-url"
-	logzioDirPath   = "logzio-dir-path"
-	logzioLogSource = "logzio-source"
-	logzioLogAttr   = "logzio-attributes"
+	axiomToken   = "axiom-token"
+	axiomOrgId   = "axiom-org-id"
+	axiomDataset = "axiom-dataset"
 
 	envLogsDrainTimeout           = "LOGZIO_DRIVER_LOGS_DRAIN_TIMEOUT"
 	envChannelSize                = "LOGZIO_DRIVER_CHANNEL_SIZE"
 	envDiskThreshold              = "LOGZIO_DRIVER_DISK_THRESHOLD"
 	envMaxMsgBufferSize           = "LOGZIO_MAX_MSG_BUFFER_SIZE"
 	envPartialBufferTimerDuration = "LOGZIO_MAX_PARTIAL_BUFFER_DURATION"
-	envDebug					  = "LOGZIO_DEBUG"
+	envDebug                      = "LOGZIO_DEBUG"
 
 	envRegex     = "env-regex"
 	dockerLabels = "labels"
@@ -59,11 +55,11 @@ const (
 	defaultStreamChannelSize          = 10 * 1000
 	defaultPartialBufferTimerDuration = time.Millisecond * 500
 	defaultFlushPartialBuffer         = time.Second * 5
-	defaultDebug					  = false
+	defaultDebug                      = false
 
 	defaultFormat     = "text"
-	driverName        = "logzio"
-	defaultSourceType = "logzio-docker-driver"
+	driverName        = "axiom"
+	defaultSourceType = "axiom-docker-driver"
 	jsonFormat        = "json"
 )
 
@@ -82,7 +78,7 @@ type ContainerLoggersCtx struct {
 	stream       io.ReadCloser
 }
 
-type LogzioMessage struct {
+type AxiomMessage struct {
 	Host      string      `structs:"hostname"`
 	Message   interface{} `structs:"message"`
 	LogSource string      `structs:"log_source,omitempty"`
@@ -91,11 +87,11 @@ type LogzioMessage struct {
 	Type      string      `structs:"type,omitempty"`
 }
 
-type LogzioLogger struct {
+type AxiomLogger struct {
 	logger.Logger
 	closed            bool
 	closedDriverCond  *sync.Cond
-	logzioSender      *logzio.LogzioSender
+	axiomClient       *axiom.Client
 	lock              sync.RWMutex
 	logFormat         string
 	maxMsgBufferSize  int
@@ -109,7 +105,7 @@ type LogzioLogger struct {
 type SenderConfigurations struct {
 	info     logger.Info
 	hashCode string
-	sender   *logzio.LogzioSender
+	sender   *axiom.Client
 }
 
 func newDriver() *Driver {
@@ -131,15 +127,15 @@ func (d *Driver) flushPartialBuffers() {
 				d.mu.Unlock()
 				continue
 			}
-			logzioLogger := containerLoggerInfo.logzioLogger
-			delta := time.Now().Sub(logzioLogger.pBuf.startTime)
-			if delta > logzioLogger.pBuf.timeout {
+			axiomClient := containerLoggerInfo.axiomLogger
+			delta := time.Now().Sub(axiomClient.pBuf.startTime)
+			if delta > axiomClient.pBuf.timeout {
 				var msg logger.Message
-				msg.Line = logzioLogger.pBuf.buf
-				msg.Source = logzioLogger.pBuf.source
-				msg.Timestamp = time.Unix(0, logzioLogger.pBuf.timeNano)
+				msg.Line = axiomClient.pBuf.buf
+				msg.Source = axiomClient.pBuf.source
+				msg.Timestamp = time.Unix(0, axiomClient.pBuf.timeNano)
 
-				if err := logzioLogger.Log(&msg); err != nil {
+				if err := axiomClient.Log(&msg); err != nil {
 					logrus.WithField("id", containerID).WithError(err).WithField("message", msg).
 						Error("Logz.io logger:error writing log message")
 				}
@@ -155,23 +151,28 @@ func validateDriverOpt(loggerInfo logger.Info) (string, error) {
 	// Config in logger.info is map[string]string
 	for opt := range config {
 		switch opt {
-		case logzioFormat, logzioLogSource, logzioTag, logzioToken, logzioType, logzioURL, logzioDirPath,
-			envRegex, dockerLabels, dockerEnv, logzioLogAttr:
+		case axiomToken, axiomOrgId, axiomDataset, axiomURL, envRegex, dockerLabels, dockerEnv:
 		default:
 			return "", fmt.Errorf("wrong log-opt: '%s' - %s\n", opt, loggerInfo.ContainerID)
 		}
 	}
-	_, ok := config[logzioDirPath]
+	_, ok := config[axiomDataset]
 	if !ok {
-		return "", fmt.Errorf("logz.io dir path is required. config: %v+\n", config)
+		return "", fmt.Errorf("Axiom Dataset is required. config: %v+\n", config)
 	}
 
-	token, ok := config[logzioToken]
+	token, ok := config[axiomToken]
 	if !ok {
-		return "", fmt.Errorf("logz.io token is required\n")
+		return "", fmt.Errorf("Axiom token is required\n")
 	}
 
-	hashCode := hash(token, config[logzioDirPath])
+	orgId, ok := config[axiomOrgId]
+	axiomURL, ok := config[axiomDataset]
+	if !ok {
+		return "", fmt.Errorf("Axiom org id is required\n")
+	}
+
+	hashCode := hash(token, config[axiomDataset])
 
 	return hashCode, nil
 }
@@ -281,7 +282,8 @@ func getEnvBool(env string, dValue bool) bool {
 	return retVal
 }
 
-func newLogzioSender(loggerInfo logger.Info, token string, sender *logzio.LogzioSender, hashCode string) (*logzio.LogzioSender, error) {
+// hilli
+func newAxiomSender(loggerInfo logger.Info, token string, sender *axiom.Client, hashCode string) (*axiom.Client, error) {
 	if sender != nil {
 		return sender, nil
 	}
@@ -295,7 +297,7 @@ func newLogzioSender(loggerInfo logger.Info, token string, sender *logzio.Logzio
 		debugWriter = nil
 	}
 
-	lsender, err := logzio.New(token,
+	lsender, err := axiom.NewClient(token,
 		logzio.SetDebug(debugWriter),
 		logzio.SetUrl(urlStr),
 		logzio.SetDrainDiskThreshold(eDiskThreshold),

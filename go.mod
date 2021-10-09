@@ -9,7 +9,6 @@ require (
 	github.com/docker/go-plugins-helpers v0.0.0-20181025120712-1e6269c305b8
 	github.com/fatih/structs v1.1.0
 	github.com/gogo/protobuf v1.3.0
-	github.com/logzio/logzio-go v0.0.0-20190916115104-4cd568a9b6d6
 	github.com/pkg/errors v0.9.1
 	github.com/tonistiigi/fifo v0.0.0-20190816180239-bda0ff6ed73c
 )
